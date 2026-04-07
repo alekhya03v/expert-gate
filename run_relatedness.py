@@ -1,30 +1,38 @@
-import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
-from cnn_autoencoder_layer_relusig import ExpertGateAutoencoder, FeatureDataset
-from compute_relatedness import compute_relatedness
+from config import FLOWERS_IMDB, BIRDS_IMDB, SCENES_IMDB, IMAGENET_MEAN, IMAGENET_STD, BATCH_SIZE, FLOWERS_EXP, BIRDS_EXP, SCENES_EXP
+from dataset_utils import build_dataset, split_indices_from_sets
+from compute_relatedness import load_autoencoder_checkpoint, compute_relatedness
+
+def test_loader_from_dataset(dataset, batch_size):
+    _, _, test_idx = split_indices_from_sets(dataset.sets)
+    test_ds = Subset(dataset, test_idx.tolist())
+    return DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+def latest_ckpt(exp_dir, epoch=100):
+    return f"{exp_dir}/net-epoch-{epoch}.pt"
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Using device:", device)
 
-    input_size = 100
+    flowers = build_dataset(FLOWERS_IMDB, IMAGENET_MEAN, IMAGENET_STD, apply_sigmoid=True)
+    birds = build_dataset(BIRDS_IMDB, IMAGENET_MEAN, IMAGENET_STD, apply_sigmoid=True)
+    scenes = build_dataset(SCENES_IMDB, IMAGENET_MEAN, IMAGENET_STD, apply_sigmoid=True)
 
-    # Dummy data
-    x_new_task = (np.random.randn(300, input_size) + 0.5).astype("float32")
-    dataset = FeatureDataset(x_new_task)
-    loader = DataLoader(dataset, batch_size=32, shuffle=False)
+    flowers_enc = load_autoencoder_checkpoint(latest_ckpt(FLOWERS_EXP), device=device)
+    birds_enc = load_autoencoder_checkpoint(latest_ckpt(BIRDS_EXP), device=device)
+    scenes_enc = load_autoencoder_checkpoint(latest_ckpt(SCENES_EXP), device=device)
 
-    # Two example autoencoders
-    model1 = ExpertGateAutoencoder(input_size=input_size, code_size=20).to(device)
-    model2 = ExpertGateAutoencoder(input_size=input_size, code_size=20).to(device)
+    print("\nFlowers vs Birds-on-Birds:")
+    print(compute_relatedness(flowers_enc, birds_enc, test_loader_from_dataset(birds, BATCH_SIZE), device=device))
 
-    result = compute_relatedness(model1, model2, loader, device=device)
+    print("\nFlowers vs Scenes-on-Scenes:")
+    print(compute_relatedness(flowers_enc, scenes_enc, test_loader_from_dataset(scenes, BATCH_SIZE), device=device))
 
-    print("Relatedness result:")
-    for k, v in result.items():
-        print(f"{k}: {v}")
+    print("\nBirds vs Scenes-on-Scenes:")
+    print(compute_relatedness(birds_enc, scenes_enc, test_loader_from_dataset(scenes, BATCH_SIZE), device=device))
 
 if __name__ == "__main__":
     main()
