@@ -1,10 +1,6 @@
 import os
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
-
-def sigmoid_tensor(x):
-    return torch.sigmoid(x)
 
 def sparse_linear_init(layer: nn.Linear, non_zero_per_output: int = 15):
     with torch.no_grad():
@@ -20,15 +16,6 @@ def sparse_linear_init(layer: nn.Linear, non_zero_per_output: int = 15):
             layer.weight[out_idx, idx] = torch.randn(k) * 0.01
 
 class ExpertGateAutoencoder(nn.Module):
-    """
-    One-layer autoencoder:
-    input -> code -> sigmoid(reconstruction)
-
-    MATLAB repo uses:
-    - sparse initialization
-    - code_size = latent dimension
-    - sigmoid decoder output
-    """
     def __init__(self, input_size: int, code_size: int = 500, sparse_k: int = 15):
         super().__init__()
         self.input_size = input_size
@@ -52,77 +39,31 @@ class ExpertGateAutoencoder(nn.Module):
             return err.mean()
         return err
 
-class FeatureDataset(Dataset):
-    """
-    Dataset for pre-extracted features.
-
-    If you have raw features per sample:
-        features: [N, D]
-    Optionally:
-        labels: [N]
-        mean/std: normalization stats
-    """
-    def __init__(self, features, labels=None, mean=None, std=None, apply_sigmoid=True):
-        self.features = torch.as_tensor(features, dtype=torch.float32)
-        self.labels = None if labels is None else torch.as_tensor(labels, dtype=torch.long)
-
-        self.mean = None if mean is None else torch.as_tensor(mean, dtype=torch.float32)
-        self.std = None if std is None else torch.as_tensor(std, dtype=torch.float32)
-
-        self.apply_sigmoid = apply_sigmoid
-
-    def __len__(self):
-        return len(self.features)
-
-    def __getitem__(self, idx):
-        x = self.features[idx]
-
-        if self.mean is not None and self.std is not None:
-            x = (x - self.mean) / (self.std + 1e-8)
-
-        if self.apply_sigmoid:
-            x = torch.sigmoid(x)
-
-        if self.labels is None:
-            return x
-        return x, self.labels[idx]
-
 def get_default_autoencoder_opts():
     return {
         "useValidation": True,
-        "imdbPath": "./data/scenes/encoder_input_scenes_imdb.pt",
+        "imdbPath": "./data/scences/encoder_input_scenes_imdb.npz",
         "expDir": "./Scenes/autoencoder/onelayer_direct_input_encodernorm/",
         "code_size": 500,
         "input_size": 43264,
         "batchSize": 12,
         "initial_encoder": None,
-        "errorType": "euclideanloss",
         "display": 1,
         "delta": 1e-8,
         "continue_train": False,
         "learningRate": 1e-2,
         "numEpochs": 100,
-        "plotDiagnostics": False,
-        "prefetch": False,
         "snapshot": 1,
-        "sync": True,
         "test_interval": 1,
         "useGpu": True,
         "weightDecay": 5e-4,
     }
 
 def cnn_autoencoder_layer_relusig(**kwargs):
-    """
-    Python replacement for cnn_autoencoder_layer_relusig.m
-
-    Builds a one-layer autoencoder and returns:
-        net, opts
-    """
     opts = get_default_autoencoder_opts()
     opts.update(kwargs)
 
-    if not os.path.exists(opts["expDir"]):
-        os.makedirs(opts["expDir"], exist_ok=True)
+    os.makedirs(opts["expDir"], exist_ok=True)
 
     if opts["initial_encoder"] is not None and os.path.exists(opts["initial_encoder"]):
         checkpoint = torch.load(opts["initial_encoder"], map_location="cpu")
