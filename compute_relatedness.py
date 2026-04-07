@@ -2,11 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from cnn_autoencoder_layer_relusig import ExpertGateAutoencoder
-
-def _unpack_batch(batch):
-    if isinstance(batch, (list, tuple)):
-        return batch[0]
-    return batch
+from dataset_utils import build_dataset, split_indices_from_sets
 
 def load_autoencoder_checkpoint(path, device="cpu"):
     ckpt = torch.load(path, map_location=device)
@@ -20,33 +16,29 @@ def load_autoencoder_checkpoint(path, device="cpu"):
     return model
 
 def compute_relatedness(first_model, second_model, dataloader, device="cpu"):
-    first_model.eval()
-    second_model.eval()
-    first_model.to(device)
-    second_model.to(device)
+    first_model.eval().to(device)
+    second_model.eval().to(device)
 
-    first_errors = []
-    second_errors = []
-    acc_t2_count = 0
+    all_first_err = []
+    all_second_err = []
+    acc_t2 = 0
     total = 0
 
     with torch.no_grad():
         for batch in dataloader:
-            x = _unpack_batch(batch).to(device).float()
+            x = batch[0].to(device).float() if isinstance(batch, (list, tuple)) else batch.to(device).float()
+            first_err = first_model.reconstruction_error(x, reduction="none")
+            second_err = second_model.reconstruction_error(x, reduction="none")
 
-            err1 = first_model.reconstruction_error(x, reduction="none")
-            err2 = second_model.reconstruction_error(x, reduction="none")
+            all_first_err.extend(first_err.cpu().tolist())
+            all_second_err.extend(second_err.cpu().tolist())
 
-            first_errors.extend(err1.cpu().tolist())
-            second_errors.extend(err2.cpu().tolist())
-
-            acc_t2_count += (err2 < err1).sum().item()
+            acc_t2 += (second_err < first_err).sum().item()
             total += x.size(0)
 
-    first_avg_err = sum(first_errors) / len(first_errors)
-    second_avg_err = sum(second_errors) / len(second_errors)
-    acc_t2 = 100.0 * acc_t2_count / max(total, 1)
-
+    acc_t2 = 100.0 * acc_t2 / max(total, 1)
+    first_avg_err = sum(all_first_err) / len(all_first_err)
+    second_avg_err = sum(all_second_err) / len(all_second_err)
     confusion = (first_avg_err - second_avg_err) * 100.0 / max(second_avg_err, 1e-12)
     relatedness = 100.0 - confusion
 
@@ -57,26 +49,3 @@ def compute_relatedness(first_model, second_model, dataloader, device="cpu"):
         "confusion": confusion,
         "relatedness": relatedness,
     }
-
-if __name__ == "__main__":
-    # Example usage:
-    # python compute_relatedness.py
-    import numpy as np
-    from cnn_autoencoder_layer_relusig import FeatureDataset
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    input_size = 100
-    x_old = np.random.randn(200, input_size).astype("float32")
-    x_new = (np.random.randn(200, input_size) + 0.5).astype("float32")
-
-    ds_old = FeatureDataset(x_old)
-    ds_new = FeatureDataset(x_new)
-
-    loader_new = DataLoader(ds_new, batch_size=32, shuffle=False)
-
-    m1 = ExpertGateAutoencoder(input_size=input_size, code_size=20).to(device)
-    m2 = ExpertGateAutoencoder(input_size=input_size, code_size=20).to(device)
-
-    result = compute_relatedness(m1, m2, loader_new, device=device)
-    print(result)
